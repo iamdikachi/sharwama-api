@@ -1,0 +1,305 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// All money fields are integers in kobo.
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+enum OrderType {
+  DELIVERY
+  PICKUP
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  ACCEPTED
+  PREPARING
+  READY
+  OUT_FOR_DELIVERY
+  DELIVERED
+  PICKED_UP
+  CANCELLED
+  EXPIRED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum PromoType {
+  PERCENT
+  FIXED
+}
+
+model User {
+  id           String   @id @default(uuid(7))
+  name         String
+  phone        String   @unique
+  email        String?  @unique
+  passwordHash String
+  role         Role     @default(CUSTOMER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  addresses     Address[]
+  orders        Order[]
+  statusChanges OrderStatusHistory[]
+
+  @@map("users")
+}
+
+model DeliveryZone {
+  id       String   @id @default(uuid(7))
+  name     String
+  areas    String[]
+  fee      Int
+  isActive Boolean  @default(true)
+
+  addresses Address[]
+  orders    Order[]
+
+  @@map("delivery_zones")
+}
+
+model Address {
+  id        String  @id @default(uuid(7))
+  userId    String
+  zoneId    String?
+  label     String?
+  street    String
+  landmark  String?
+  isDefault Boolean @default(false)
+
+  user User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  zone DeliveryZone? @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+model MenuCategory {
+  id        String  @id @default(uuid(7))
+  name      String
+  imageUrl  String?
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  items MenuItem[]
+
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id          String  @id @default(uuid(7))
+  categoryId  String
+  name        String
+  description String?
+  basePrice   Int
+  imageUrl    String?
+  cutoutUrl   String?
+  isAvailable Boolean @default(true)
+  isFeatured  Boolean @default(false)
+  sortOrder   Int     @default(0)
+
+  category     MenuCategory  @relation(fields: [categoryId], references: [id])
+  optionGroups OptionGroup[]
+  orderItems   OrderItem[]
+
+  @@index([categoryId])
+  @@map("menu_items")
+}
+
+model OptionGroup {
+  id        String  @id @default(uuid(7))
+  itemId    String
+  name      String
+  isRequired Boolean @default(false)
+  minSelect Int     @default(0)
+  maxSelect Int     @default(1)
+  sortOrder Int     @default(0)
+
+  item    MenuItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  options Option[]
+
+  @@index([itemId])
+  @@map("option_groups")
+}
+
+model Option {
+  id          String  @id @default(uuid(7))
+  groupId     String
+  name        String
+  priceDelta  Int     @default(0)
+  imageUrl    String?
+  isAvailable Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  group OptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@map("options")
+}
+
+model PromoCode {
+  id        String    @id @default(uuid(7))
+  code      String    @unique
+  type      PromoType
+  value     Int
+  minOrder  Int       @default(0)
+  maxUses   Int?
+  usedCount Int       @default(0)
+  expiresAt DateTime?
+  isActive  Boolean   @default(true)
+
+  orders Order[]
+
+  @@map("promo_codes")
+}
+
+model Order {
+  id             String      @id @default(uuid(7))
+  orderNumber    Int         @unique @default(autoincrement())
+  publicToken    String      @unique @default(uuid(4))
+  idempotencyKey String?     @unique
+  userId         String?
+  type           OrderType
+  status         OrderStatus @default(PENDING_PAYMENT)
+
+  customerName  String
+  customerPhone String
+  customerEmail String?
+  notes         String?
+
+  subtotal    Int
+  deliveryFee Int @default(0)
+  discount    Int @default(0)
+  total       Int
+
+  zoneId           String?
+  deliveryZoneName String?
+  deliveryStreet   String?
+  deliveryLandmark String?
+
+  promoCodeId String?
+  promoCode   String?
+
+  riderName  String?
+  riderPhone String?
+
+  placedAt  DateTime  @default(now())
+  expiresAt DateTime
+  paidAt    DateTime?
+  updatedAt DateTime  @updatedAt
+
+  user     User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  zone     DeliveryZone?        @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  promo    PromoCode?           @relation(fields: [promoCodeId], references: [id], onDelete: SetNull)
+  items    OrderItem[]
+  payments Payment[]
+  history  OrderStatusHistory[]
+
+  @@index([status, placedAt])
+  @@index([userId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id              String  @id @default(uuid(7))
+  orderId         String
+  menuItemId      String?
+  name            String
+  unitPrice       Int
+  quantity        Int
+  lineTotal       Int
+  selectedOptions Json
+  notes           String?
+
+  order    Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Payment {
+  id                String        @id @default(uuid(7))
+  orderId           String
+  provider          String        @default("bachs")
+  providerReference String        @unique
+  checkoutUrl       String?
+  status            PaymentStatus @default(PENDING)
+  amount            Int
+  paidAmount        Int?
+  currency          String        @default("NGN")
+  needsReview       Boolean       @default(false)
+  reviewReason      String?
+  rawWebhook        Json?
+  paidAt            DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([needsReview])
+  @@map("payments")
+}
+
+model OrderStatusHistory {
+  id          String       @id @default(uuid(7))
+  orderId     String
+  fromStatus  OrderStatus?
+  toStatus    OrderStatus
+  source      String
+  changedById String?
+  note        String?
+  createdAt   DateTime     @default(now())
+
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changedBy User? @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+model WebhookEvent {
+  id              String    @id @default(uuid(7))
+  providerEventId String    @unique
+  type            String
+  payload         Json
+  processedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@map("webhook_events")
+}
+
+model StoreSetting {
+  id             Int      @id @default(1)
+  isOpenOverride Boolean?
+  minOrderAmount Int      @default(0)
+  shopPhone      String?
+  shopAddress    String?
+  openingHours   Json?
+  updatedAt      DateTime @updatedAt
+
+  @@map("store_settings")
+}
